@@ -70,7 +70,9 @@ import Prelude hiding (foldl, foldr, mapM)
 data LayoutTree a
   = Root { _payload :: a,
            _children :: [LayoutTree a],
-           _rootPtr :: ForeignPtr C'YGNode }
+           _rootPtr :: ForeignPtr C'YGNode,
+            -- | Hold onto children pointers to prevent their GC
+           _childrenPtrs :: [ForeignPtr C'YGNode] }
   | Container { _payload :: a,
                 _children :: [LayoutTree a] }
   | Leaf { _payload :: a }
@@ -85,7 +87,7 @@ data LayoutTree a
 newtype Layout a = Layout { generateLayout :: IO (LayoutTree a) }
 
 withNativePtr :: LayoutTree a -> (Ptr C'YGNode -> IO b) -> IO b
-withNativePtr (Root _ _ ptr) f = withForeignPtr ptr f
+withNativePtr (Root _ _ ptr _) f = withForeignPtr ptr f
 withNativePtr _ _ = error "Internal: Only root nodes have pointers"
 
 -- | Children are a list of layouts annotated with a style for how they should
@@ -99,32 +101,32 @@ data Children a
   | Wrap (Children a)
 
 instance Functor LayoutTree where
-  fmap f (Root x cs ptr) = Root (f x) (fmap (fmap f) cs) ptr
+  fmap f (Root x cs ptr cptrs) = Root (f x) (fmap (fmap f) cs) ptr cptrs
   fmap f (Container x cs) = Container (f x) (fmap (fmap f) cs)
   fmap f (Leaf x) = Leaf (f x)
 
 instance Foldable LayoutTree where
-  foldMap f (Root x cs _) = f x `mappend` foldMap (foldMap f) cs
+  foldMap f (Root x cs _ _) = f x `mappend` foldMap (foldMap f) cs
   foldMap f (Container x cs) = f x `mappend` foldMap (foldMap f) cs
   foldMap f (Leaf x) = f x
 
-  foldl f z (Root x cs _) = foldl (foldl f) (f z x) cs
+  foldl f z (Root x cs _ _) = foldl (foldl f) (f z x) cs
   foldl f z (Container x cs) = foldl (foldl f) (f z x) cs
   foldl f z (Leaf x) = f z x
 
-  foldr f z (Root x cs _) = f x $ foldr (flip $ foldr f) z cs
+  foldr f z (Root x cs _ _) = f x $ foldr (flip $ foldr f) z cs
   foldr f z (Container x cs) = f x $ foldr (flip $ foldr f) z cs
   foldr f z (Leaf x) = f x z
 
 instance Traversable LayoutTree where
-  traverse f (Root x cs ptr) =
-    Root <$> f x <*> traverse (traverse f) cs <*> pure ptr
+  traverse f (Root x cs ptr cptrs) =
+    Root <$> f x <*> traverse (traverse f) cs <*> pure ptr <*> pure cptrs
   traverse f (Container x cs) =
     Container <$> f x <*> traverse (traverse f) cs
   traverse f (Leaf x) = Leaf <$> f x
 
-  sequenceA (Root x cs ptr) =
-    Root <$> x <*> traverse sequenceA cs <*> pure ptr
+  sequenceA (Root x cs ptr cptrs) =
+    Root <$> x <*> traverse sequenceA cs <*> pure ptr <*> pure cptrs
   sequenceA (Container x cs) =
     Container <$> x <*> traverse sequenceA cs
   sequenceA (Leaf x) = Leaf <$> x
@@ -132,7 +134,7 @@ instance Traversable LayoutTree where
 mkNode :: a -> Layout a
 mkNode x = Layout $ do
   ptr <- c'YGNodeNew
-  Root x [] <$> newForeignPtr p'YGNodeFree ptr
+  Root x [] <$> newForeignPtr p'YGNodeFree ptr <*> pure []
 
 -- | Collects a list of layouts and orients them from start to end depending
 -- on the orientation of the parent (LTR vs RTL).
@@ -173,14 +175,14 @@ justifiedContainer just cs x = Layout $ do
   cs' <- forM (zip [0..] cs) $ \(idx, node) -> do
     nodeTree <- generateLayout node
     case nodeTree of
-      Root p children fptr -> withForeignPtr fptr $ \oldptr -> do
-        newptr <- c'YGNodeClone oldptr
-        c'YGNodeInsertChild ptr newptr idx
-        return $ if null children
+      Root p children fptr cptrs -> withForeignPtr fptr $ \childptr -> do
+        c'YGNodeInsertChild ptr childptr idx
+        return ( if null children
                  then Leaf p
                  else Container p children
+               , fptr : cptrs )
       _ -> error "Internal: expected root node"
-  Root x cs' <$> newForeignPtr p'YGNodeFreeRecursive ptr
+  Root x (map fst cs') <$> newForeignPtr p'YGNodeFree ptr <*> pure (concatMap snd cs')
 
 assembleChildren :: Children a -> a -> Layout a
 assembleChildren (StartToEnd cs) x = justifiedContainer c'YGJustifyFlexStart cs x
@@ -502,9 +504,9 @@ renderNodeWithChildren parentInfo x children ptr f = do
 foldRenderTree :: (MonadIO m, Monoid b) =>
                   LayoutInfo -> LayoutTree a -> Ptr C'YGNode -> RenderFn m a (b, c) ->
                   m (b, LayoutTree c)
-foldRenderTree parentInfo (Root x children fptr) ptr f = do
+foldRenderTree parentInfo (Root x children fptr cptrs) ptr f = do
   (result, y, cs) <- renderNodeWithChildren parentInfo x children ptr f
-  return (result, Root y cs fptr)
+  return (result, Root y cs fptr cptrs)
 foldRenderTree parentInfo (Container x children) ptr f = do
   (result, y, cs) <- renderNodeWithChildren parentInfo x children ptr f
   return (result, Container y cs)
@@ -522,7 +524,7 @@ foldRender :: (MonadIO m, Monoid b) =>
 foldRender lyt f = do
   node <- liftIO $ generateLayout lyt
   case node of
-    Root _ _ fptr -> do
+    Root _ _ fptr _ -> do
       rootPtr <- liftIO $ withForeignPtr fptr $ \ptr -> do
         calculateLayout ptr
         return ptr
