@@ -129,16 +129,20 @@ library
                       -std=c++20
                       -DYG_ENABLE_EVENTS
 
-  extra-libraries:    stdc++
+  build-depends:
+    base            >= 4     && < 6,
+    bindings-DSL
+
+  if impl(ghc >= 9.4)
+    build-depends:      system-cxx-std-lib
+  else
+    extra-libraries:    stdc++
 
   exposed-modules:
     Bindings.Yoga
     Bindings.Yoga.Enums
     Yoga
 
-  build-depends:
-    base            >= 4     && < 6,
-    bindings-DSL
 
 flag                 examples
   description:       Build examples
