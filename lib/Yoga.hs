@@ -28,7 +28,7 @@ module Yoga (
   -- within their parent.
   Children, startToEnd, endToStart, centered, spaceBetween, spaceAround,
   wrapped,
-  
+
   -- ** Containers
   hbox, vbox,
   hboxLeftToRight, hboxRightToLeft,
@@ -36,11 +36,11 @@ module Yoga (
 
   -- ** Leaf nodes
   Size(..),
-  shrinkable, growable, exact, withDimensions,
+  shrinkable, growable, exact, withDimensions, node,
 
   -- ** Attributes
   Edge(..), Gutter(..), Align(..),
-  stretched, setMargin, setPadding, setBorder, setGap, setAlignItems,
+  stretched, setMargin, setPadding, setBorder, setGap, setAlignItems, setPositionType, setWidth, setHeight, setFlexGrow,
 
   -- ** Rendering
   LayoutInfo(..), RenderFn, render, foldRender,
@@ -267,31 +267,54 @@ data Size
   | Min Float
   | Max Float
   | Range Float Float
+  | Auto
     deriving (Read, Show, Eq, Ord)
 
-setWidth :: Size -> LayoutTree a -> IO ()
-setWidth (Exact w) lyt =
+setWidthRaw :: Size -> LayoutTree a -> IO ()
+setWidthRaw (Exact w) lyt =
   withNativePtr lyt $ \ptr -> c'YGNodeStyleSetWidth ptr $ realToFrac w
-setWidth (Min w) lyt =
+setWidthRaw (Min w) lyt =
   withNativePtr lyt $ \ptr -> c'YGNodeStyleSetMinWidth ptr $ realToFrac w
-setWidth (Max w) lyt =
+setWidthRaw (Max w) lyt =
   withNativePtr lyt $ \ptr -> c'YGNodeStyleSetMaxWidth ptr $ realToFrac w
-setWidth (Range minWidth maxWidth) lyt =
+setWidthRaw (Range minWidth maxWidth) lyt =
   withNativePtr lyt $ \ptr -> do
     c'YGNodeStyleSetMinWidth ptr $ realToFrac minWidth
     c'YGNodeStyleSetMaxWidth ptr $ realToFrac maxWidth
+setWidthRaw Auto lyt =
+  withNativePtr lyt $ \ptr -> do
+    c'YGNodeStyleSetWidthAuto ptr
 
-setHeight :: Size -> LayoutTree a -> IO ()
-setHeight (Exact h) lyt =
+setHeightRaw :: Size -> LayoutTree a -> IO ()
+setHeightRaw (Exact h) lyt =
   withNativePtr lyt $ \ptr -> c'YGNodeStyleSetHeight ptr $ realToFrac h
-setHeight (Min h) lyt =
+setHeightRaw (Min h) lyt =
   withNativePtr lyt $ \ptr -> c'YGNodeStyleSetMinHeight ptr $ realToFrac h
-setHeight (Max h) lyt =
+setHeightRaw (Max h) lyt =
   withNativePtr lyt $ \ptr -> c'YGNodeStyleSetMaxHeight ptr $ realToFrac h
-setHeight (Range minHeight maxHeight) lyt =
+setHeightRaw (Range minHeight maxHeight) lyt =
   withNativePtr lyt $ \ptr -> do
     c'YGNodeStyleSetMinHeight ptr $ realToFrac minHeight
     c'YGNodeStyleSetMaxHeight ptr $ realToFrac maxHeight
+setHeightRaw Auto lyt =
+  withNativePtr lyt $ \ptr -> do
+    c'YGNodeStyleSetHeightAuto ptr
+
+-- | Position type describes whether the node is or is not in the flow.
+data PositionType
+  = PositionType'Static
+  | PositionType'Relative
+  | PositionType'Absolute
+  deriving (Eq, Ord, Bounded, Enum, Read, Show)
+
+positionTypeToCPositionType :: PositionType -> C'YGPositionType
+positionTypeToCPositionType PositionType'Static = c'YGPositionTypeStatic
+positionTypeToCPositionType PositionType'Relative = c'YGPositionTypeRelative
+positionTypeToCPositionType PositionType'Absolute = c'YGPositionTypeAbsolute
+
+setPositionType :: PositionType -> LayoutTree a -> IO ()
+setPositionType pt lyt =
+  withNativePtr lyt $ \ptr -> c'YGNodeStyleSetPositionType ptr $ positionTypeToCPositionType pt
 
 -- | Specifies layout may shrink up to the given size. The weight parameter
 -- is used to determine how much this layout will shrink in relation to any
@@ -299,8 +322,8 @@ setHeight (Range minHeight maxHeight) lyt =
 shrinkable :: Float -> Size -> Size -> Layout a -> Layout a
 shrinkable weight width height lyt = Layout $ do
   n <- generateLayout lyt
-  setWidth width n
-  setHeight height n
+  setWidthRaw width n
+  setHeightRaw height n
   withNativePtr n $ \ptr -> c'YGNodeStyleSetFlexShrink ptr $ realToFrac weight
   return n
 
@@ -310,8 +333,14 @@ shrinkable weight width height lyt = Layout $ do
 growable :: Float -> Size -> Size -> Layout a -> Layout a
 growable weight width height lyt = Layout $ do
   n <- generateLayout lyt
-  setWidth width n
-  setHeight height n
+  setWidthRaw width n
+  setHeightRaw height n
+  withNativePtr n $ \ptr -> c'YGNodeStyleSetFlexGrow ptr $ realToFrac weight
+  return n
+
+setFlexGrow :: Float -> Layout a -> Layout a
+setFlexGrow weight lyt = Layout $ do
+  n <- generateLayout lyt
   withNativePtr n $ \ptr -> c'YGNodeStyleSetFlexGrow ptr $ realToFrac weight
   return n
 
@@ -319,17 +348,21 @@ growable weight width height lyt = Layout $ do
 exact :: Float -> Float -> a -> Layout a
 exact width height x = Layout $ do
   n <- generateLayout $ mkNode x
-  setWidth (Exact width) n
-  setHeight (Exact height) n
+  setWidthRaw (Exact width) n
+  setHeightRaw (Exact height) n
   return n
 
+-- | Creates a layout
+node :: a -> Layout a
+node x = Layout $ generateLayout $ mkNode x
+
 -- | Specifies the exact dimensions expected for a layout. Can be used for
--- containers and such when there is not necessarily any rendering involved. 
+-- containers and such when there is not necessarily any rendering involved.
 withDimensions :: Float -> Float -> Layout b -> Layout b
 withDimensions width height lyt = Layout $ do
   n <- generateLayout lyt
-  setWidth (Exact width) n
-  setHeight (Exact height) n
+  setWidthRaw (Exact width) n
+  setHeightRaw (Exact height) n
   return n
 
 -- | Allows a container to stretch to fit its parent
@@ -338,6 +371,18 @@ stretched lyt = Layout $ do
   node <- generateLayout lyt
   withNativePtr node $ \ptr -> c'YGNodeStyleSetAlignSelf ptr c'YGAlignStretch
   return node
+
+setWidth :: Size -> Layout a -> Layout a
+setWidth width lyt = Layout $ do
+  n <- generateLayout lyt
+  setWidthRaw width n
+  return n
+
+setHeight :: Size -> Layout a -> Layout a
+setHeight width lyt = Layout $ do
+  n <- generateLayout lyt
+  setHeightRaw width n
+  return n
 
 -- | Edges are used to describe the direction from which we want to alter an
 -- attribute of a node.
