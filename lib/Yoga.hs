@@ -39,8 +39,9 @@ module Yoga (
   shrinkable, growable, exact, withDimensions, node,
 
   -- ** Attributes
-  Edge(..), Gutter(..), Align(..),
-  stretched, setMargin, setPadding, setBorder, setGap, setAlignItems, setPositionType, setWidth, setHeight, setFlexGrow,
+  Edge(..), Gutter(..), Align(..), PositionType(..),
+  stretched, setMargin, setPadding, setBorder, setGap, setAlignItems, setAlignSelf,
+  setPositionType, setWidth, setHeight, setFlexGrow, setFlexBasis, setAspectRatio,
 
   -- ** Rendering
   LayoutInfo(..), RenderFn, render, foldRender,
@@ -172,8 +173,8 @@ justifiedContainer just cs x = Layout $ do
   c'YGNodeStyleSetJustifyContent ptr just
   c'YGNodeStyleSetFlexWrap ptr c'YGWrapNoWrap
 
-  cs' <- forM (zip [0..] cs) $ \(idx, node) -> do
-    nodeTree <- generateLayout node
+  cs' <- forM (zip [0..] cs) $ \(idx, n) -> do
+    nodeTree <- generateLayout n
     case nodeTree of
       Root p children fptr cptrs -> withForeignPtr fptr $ \childptr -> do
         c'YGNodeInsertChild ptr childptr idx
@@ -212,50 +213,50 @@ setContainerDirection dir flexDir lyt =
 -- inherited from the parent
 hbox :: Children a -> a -> Layout a
 hbox cs x = Layout $ do
-  node <- generateLayout $ assembleChildren cs x
-  setContainerDirection c'YGDirectionInherit c'YGFlexDirectionRow node
-  return node
+  n <- generateLayout $ assembleChildren cs x
+  setContainerDirection c'YGDirectionInherit c'YGFlexDirectionRow n
+  return n
 
 -- | Generates a layout from a group of children and a payload such that the
 -- children are laid out vertically. The orientation (top to bottom vs bottom to
 -- top) is inherited from the parent.
 vbox :: Children a -> a -> Layout a
 vbox cs x = Layout $ do
-  node <- generateLayout $ assembleChildren cs x
-  setContainerDirection c'YGDirectionInherit c'YGFlexDirectionColumn node
-  return node
+  n <- generateLayout $ assembleChildren cs x
+  setContainerDirection c'YGDirectionInherit c'YGFlexDirectionColumn n
+  return n
 
 -- | Generates a layout from a group of children and a payload such that the
 -- children are laid out horizontally from left to right.
 hboxLeftToRight :: Children a -> a -> Layout a
 hboxLeftToRight cs x = Layout $ do
-  node <- generateLayout $ assembleChildren cs x
-  setContainerDirection c'YGDirectionLTR c'YGFlexDirectionRow node
-  return node
+  n <- generateLayout $ assembleChildren cs x
+  setContainerDirection c'YGDirectionLTR c'YGFlexDirectionRow n
+  return n
 
 -- | Generates a layout from a group of children and a payload such that the
 -- children are laid out horizontally from right to left.
 hboxRightToLeft :: Children a -> a -> Layout a
 hboxRightToLeft cs x = Layout $ do
-  node <- generateLayout $ assembleChildren cs x
-  setContainerDirection c'YGDirectionRTL c'YGFlexDirectionRow node
-  return node
+  n <- generateLayout $ assembleChildren cs x
+  setContainerDirection c'YGDirectionRTL c'YGFlexDirectionRow n
+  return n
 
 -- | Generates a layout from a group of children and a payload such that the
 -- children are laid out vertically from top to bottom.
 vboxTopToBottom :: Children a -> a -> Layout a
 vboxTopToBottom cs x = Layout $ do
-  node <- generateLayout $ assembleChildren cs x
-  setContainerDirection c'YGDirectionLTR c'YGFlexDirectionColumn node
-  return node
+  n <- generateLayout $ assembleChildren cs x
+  setContainerDirection c'YGDirectionLTR c'YGFlexDirectionColumn n
+  return n
 
 -- | Generates a layout from a group of children and a payload such that the
 -- children are laid out vertically from bottom to top.
 vboxBottomToTop :: Children a -> a -> Layout a
 vboxBottomToTop cs x = Layout $ do
-  node <- generateLayout $ assembleChildren cs x
-  setContainerDirection c'YGDirectionRTL c'YGFlexDirectionColumn node
-  return node
+  n <- generateLayout $ assembleChildren cs x
+  setContainerDirection c'YGDirectionRTL c'YGFlexDirectionColumn n
+  return n
 
 -- | A 'Size' is used to set properties about given layouts. In general, the
 -- width and height of a node along with its position are laid out by Yoga's
@@ -312,9 +313,11 @@ positionTypeToCPositionType PositionType'Static = c'YGPositionTypeStatic
 positionTypeToCPositionType PositionType'Relative = c'YGPositionTypeRelative
 positionTypeToCPositionType PositionType'Absolute = c'YGPositionTypeAbsolute
 
-setPositionType :: PositionType -> LayoutTree a -> IO ()
-setPositionType pt lyt =
-  withNativePtr lyt $ \ptr -> c'YGNodeStyleSetPositionType ptr $ positionTypeToCPositionType pt
+setPositionType :: PositionType -> Layout a -> Layout a
+setPositionType pt lyt = Layout $ do
+  n <- generateLayout lyt
+  withNativePtr n $ \ptr -> c'YGNodeStyleSetPositionType ptr $ positionTypeToCPositionType pt
+  return n
 
 -- | Specifies layout may shrink up to the given size. The weight parameter
 -- is used to determine how much this layout will shrink in relation to any
@@ -344,6 +347,18 @@ setFlexGrow weight lyt = Layout $ do
   withNativePtr n $ \ptr -> c'YGNodeStyleSetFlexGrow ptr $ realToFrac weight
   return n
 
+setFlexBasis :: Float -> Layout a -> Layout a
+setFlexBasis basis lyt = Layout $ do
+  n <- generateLayout lyt
+  withNativePtr n $ \ptr -> c'YGNodeStyleSetFlexBasis ptr $ realToFrac basis
+  return n
+
+setAspectRatio :: Float -> Layout a -> Layout a
+setAspectRatio aspectRatio lyt = Layout $ do
+  n <- generateLayout lyt
+  withNativePtr n $ \ptr -> c'YGNodeStyleSetAspectRatio ptr $ realToFrac aspectRatio
+  return n
+
 -- | Creates a layout with the exact width and height for the given payload.
 exact :: Float -> Float -> a -> Layout a
 exact width height x = Layout $ do
@@ -368,9 +383,9 @@ withDimensions width height lyt = Layout $ do
 -- | Allows a container to stretch to fit its parent
 stretched :: Layout a -> Layout a
 stretched lyt = Layout $ do
-  node <- generateLayout lyt
-  withNativePtr node $ \ptr -> c'YGNodeStyleSetAlignSelf ptr c'YGAlignStretch
-  return node
+  n <- generateLayout lyt
+  withNativePtr n $ \ptr -> c'YGNodeStyleSetAlignSelf ptr c'YGAlignStretch
+  return n
 
 setWidth :: Size -> Layout a -> Layout a
 setWidth width lyt = Layout $ do
@@ -414,30 +429,30 @@ setMargin :: Edge -> Float -> Layout a -> Layout a
 setMargin = setMargin' . edgeToCEdge
   where
     setMargin' edge px lyt = Layout $ do
-      node <- generateLayout lyt
-      withNativePtr node $ \ptr ->
+      n <- generateLayout lyt
+      withNativePtr n $ \ptr ->
           c'YGNodeStyleSetMargin ptr edge $ realToFrac px
-      return node
+      return n
 
 -- | Overrides the padding for a layout with the given padding.
 setPadding :: Edge -> Float -> Layout a -> Layout a
 setPadding = setPadding' . edgeToCEdge
   where
     setPadding' edge px lyt = Layout $ do
-      node <- generateLayout lyt
-      withNativePtr node $ \ptr ->
+      n <- generateLayout lyt
+      withNativePtr n $ \ptr ->
         c'YGNodeStyleSetPadding ptr edge $ realToFrac px
-      return node
+      return n
 
 -- | Overrides the border for a layout with the given border.
 setBorder :: Edge -> Float -> Layout a -> Layout a
 setBorder = setBorder' . edgeToCEdge
   where
     setBorder' edge px lyt = Layout $ do
-      node <- generateLayout lyt
-      withNativePtr node $ \ptr ->
+      n <- generateLayout lyt
+      withNativePtr n $ \ptr ->
         c'YGNodeStyleSetBorder ptr edge $ realToFrac px
-      return node
+      return n
 
 -- | Gutters are used to denote the size of a gap between elements.
 data Gutter
@@ -455,10 +470,10 @@ setGap = setGap' . gapToCGap
     gapToCGap Gutter'All = c'YGGutterAll
 
     setGap' gutter px lyt = Layout $ do
-      node <- generateLayout lyt
-      withNativePtr node $ \ptr ->
+      n <- generateLayout lyt
+      withNativePtr n $ \ptr ->
         c'YGNodeStyleSetGap ptr gutter $ realToFrac px
-      return node
+      return n
 
 -- | Aligns describe how items are positioned relative to the container.
 data Align
@@ -486,10 +501,29 @@ setAlignItems = setAlign' . alignToCAlign
     alignToCAlign Align'SpaceAround = c'YGAlignSpaceAround
 
     setAlign' align lyt = Layout $ do
-      node <- generateLayout lyt
-      withNativePtr node $ \ptr ->
+      n <- generateLayout lyt
+      withNativePtr n $ \ptr ->
         c'YGNodeStyleSetAlignItems ptr align
-      return node
+      return n
+
+-- | Align items along the cross axis (not the main axis) of a container.
+setAlignSelf :: Align -> Layout a -> Layout a
+setAlignSelf = setAlignSelf' . alignToCAlign
+  where
+    alignToCAlign Align'Auto = c'YGAlignAuto
+    alignToCAlign Align'FlexStart = c'YGAlignFlexStart
+    alignToCAlign Align'Center = c'YGAlignCenter
+    alignToCAlign Align'FlexEnd = c'YGAlignFlexEnd
+    alignToCAlign Align'Stretch = c'YGAlignStretch
+    alignToCAlign Align'Baseline = c'YGAlignBaseline
+    alignToCAlign Align'SpaceBetween = c'YGAlignSpaceBetween
+    alignToCAlign Align'SpaceAround = c'YGAlignSpaceAround
+
+    setAlignSelf' align lyt = Layout $ do
+      n <- generateLayout lyt
+      withNativePtr n $ \ptr ->
+        c'YGNodeStyleSetAlignSelf ptr align
+      return n
 
 --------------------------------------------------------------------------------
 -- Rendering
@@ -567,13 +601,13 @@ foldRenderTree parentInfo (Leaf x) ptr f = do
 foldRender :: (MonadIO m, Monoid b) =>
               Layout a -> RenderFn m a (b, c) -> m (b, Layout c)
 foldRender lyt f = do
-  node <- liftIO $ generateLayout lyt
-  case node of
+  n <- liftIO $ generateLayout lyt
+  case n of
     Root _ _ fptr _ -> do
       rootPtr <- liftIO $ withForeignPtr fptr $ \ptr -> do
         calculateLayout ptr
         return ptr
-      (bs, tree) <- foldRenderTree emptyInfo node rootPtr f
+      (bs, tree) <- foldRenderTree emptyInfo n rootPtr f
       return (bs, Layout $ return tree)
     _ -> error "Internal: Rendering must be done from the root node"
 
